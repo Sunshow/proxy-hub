@@ -135,6 +135,9 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		RequestRestart: requestRestart,
 		ReloadProxyHealth: func(config utils.ProxyHealthConfig) {
 			proxyService.HealthStart(context.Background(), config)
+			if _, err := proxyService.RuntimeReload(context.Background()); err != nil {
+				theLogger.Warn("代理运行时重载健康检查配置失败", zap.Error(err))
+			}
 		},
 	})
 	h.HumaTypesRegister()
@@ -143,12 +146,14 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	user.Register(v1)
 	proxyAPI.Register(v1)
 
+	// Initialize health configuration before building runtime policies. Least-latency
+	// groups capture the probe URL when their sing-box instances are created.
+	proxyService.HealthStart(context.Background(), cfg.ProxyHealth)
 	if status, err := proxyService.RuntimeReload(context.Background()); err != nil {
 		theLogger.Warn("代理运行时启动失败", zap.Error(err))
 	} else if status.Running {
 		theLogger.Info("代理运行时已启动", zap.Int("inbounds", len(status.Inbounds)))
 	}
-	proxyService.HealthStart(context.Background(), cfg.ProxyHealth)
 	defer func() {
 		proxyService.HealthStop()
 		if err := proxyService.RuntimeStop(); err != nil {
