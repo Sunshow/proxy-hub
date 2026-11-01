@@ -85,6 +85,12 @@ func TestGenOpenAPIIncludesSystemRoutes(t *testing.T) {
 	if !strings.Contains(spec, "/api/v1/system/restart") {
 		t.Fatalf("OpenAPI paths missing system restart route")
 	}
+	if !strings.Contains(spec, "/api/v1/system/proxy-health") {
+		t.Fatalf("OpenAPI paths missing system proxy-health route")
+	}
+	if !strings.Contains(spec, "probeUrl") {
+		t.Fatalf("OpenAPI schema missing probeUrl field")
+	}
 	if !strings.Contains(spec, "updateCommand") {
 		t.Fatalf("OpenAPI schema missing updateCommand field")
 	}
@@ -218,6 +224,78 @@ func TestSystemListenUpdateRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestSystemProxyHealthRoutesReadAndUpdateConfig(t *testing.T) {
+	cfg := setupSystemConfigTest(t)
+
+	app := fiber.New()
+	_, v1 := h.NewAPI(app, cfg)
+	t.Cleanup(func() {
+		_ = app.Shutdown()
+	})
+
+	var reloaded utils.ProxyHealthConfig
+	registerSystemRoutes(v1, systemRouteOptions{
+		Config: cfg,
+		ReloadProxyHealth: func(config utils.ProxyHealthConfig) {
+			reloaded = config
+		},
+	})
+
+	getResp := mustTestRequest(t, app, http.MethodGet, "/api/v1/system/proxy-health")
+	if got := getResp.StatusCode; got != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", got, http.StatusOK)
+	}
+	var current proxyHealthConfigBody
+	if err := json.NewDecoder(getResp.Body).Decode(&current); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	if current.ProbeURL != cfg.ProxyHealth.ProbeURL {
+		t.Fatalf("GET probe URL = %q, want %q", current.ProbeURL, cfg.ProxyHealth.ProbeURL)
+	}
+
+	const probeURL = "https://cp.cloudflare.com/generate_204"
+	updateResp := mustJSONTestRequest(t, app, http.MethodPut, "/api/v1/system/proxy-health", `{"probeUrl":"`+probeURL+`"}`)
+	if got := updateResp.StatusCode; got != http.StatusOK {
+		t.Fatalf("PUT status = %d, want %d", got, http.StatusOK)
+	}
+	var updated struct {
+		Message string                `json:"message"`
+		Item    proxyHealthConfigBody `json:"item"`
+	}
+	if err := json.NewDecoder(updateResp.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode PUT response: %v", err)
+	}
+	if updated.Item.ProbeURL != probeURL || cfg.ProxyHealth.ProbeURL != probeURL {
+		t.Fatalf("PUT body = %+v, cfg probe URL = %q; want %q", updated.Item, cfg.ProxyHealth.ProbeURL, probeURL)
+	}
+	if reloaded.ProbeURL != probeURL {
+		t.Fatalf("reload config probe URL = %q, want %q", reloaded.ProbeURL, probeURL)
+	}
+
+	reloadedConfig := utils.ReadConfig()
+	if reloadedConfig.ProxyHealth.ProbeURL != probeURL {
+		t.Fatalf("reloaded probe URL = %q, want persisted value", reloadedConfig.ProxyHealth.ProbeURL)
+	}
+}
+
+func TestSystemProxyHealthUpdateRejectsInvalidURL(t *testing.T) {
+	cfg := setupSystemConfigTest(t)
+
+	app := fiber.New()
+	_, v1 := h.NewAPI(app, cfg)
+	t.Cleanup(func() {
+		_ = app.Shutdown()
+	})
+	registerSystemRoutes(v1, systemRouteOptions{Config: cfg})
+
+	for _, value := range []string{"ftp://example.com/test", "not a URL", ""} {
+		resp := mustJSONTestRequest(t, app, http.MethodPut, "/api/v1/system/proxy-health", `{"probeUrl":"`+value+`"}`)
+		if got := resp.StatusCode; got != http.StatusBadRequest {
+			t.Fatalf("PUT probe URL %q status = %d, want %d", value, got, http.StatusBadRequest)
+		}
+	}
+}
+
 func TestSystemRestartRequiresConfirmationAndCallsCallback(t *testing.T) {
 	app := fiber.New()
 	_, v1 := h.NewAPI(app, &utils.AppConfig{
@@ -258,6 +336,7 @@ func TestSystemRestartRequiresConfirmationAndCallsCallback(t *testing.T) {
 
 func setupSystemConfigTest(t *testing.T) *utils.AppConfig {
 	t.Helper()
+	t.Setenv("PROXYHUB_PROXY_HEALTH_PROBE_URL", "")
 
 	tempDir := t.TempDir()
 	oldWD, err := os.Getwd()

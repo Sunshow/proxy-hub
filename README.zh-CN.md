@@ -52,6 +52,25 @@ docker run -d --name proxyhub -p 3020:3020 -v proxyhub-data:/app/data ghcr.io/fy
 
 打开 [http://127.0.0.1:3020](http://127.0.0.1:3020)。若要从容器外使用代理端口，还需映射对应端口（如 `-p 8080:8080`），并在 ProxyHub 中将该代理端口的监听地址设为 `0.0.0.0`。
 
+使用 Docker Compose 时，可以通过 `PROXYHUB_PROXY_HEALTH_PROBE_URL` 提供自动健康检查和节点测试的默认 URL；只有系统设置中没有保存 URL 时才会使用它：
+
+```yaml
+services:
+  proxyhub:
+    image: ghcr.io/fy0/proxy-hub:latest
+    ports:
+      - "3020:3020"
+    volumes:
+      - proxyhub-data:/app/data
+    environment:
+      PROXYHUB_PROXY_HEALTH_PROBE_URL: https://cp.cloudflare.com/generate_204
+
+volumes:
+  proxyhub-data:
+```
+
+优先级为：ProxyHub 系统设置中保存的 `proxyHealth.probeUrl`，其次是 `PROXYHUB_PROXY_HEALTH_PROBE_URL`，最后是内置默认值 `https://www.gstatic.com/generate_204`。环境变量在容器启动时读取。
+
 ### 二进制
 
 从 [GitHub Releases](https://github.com/fy0/proxy-hub/releases) 下载最新压缩包，解压后运行 `proxy-hub` 或 `proxy-hub.exe`。

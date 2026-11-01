@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -21,9 +22,10 @@ const (
 )
 
 type systemRouteOptions struct {
-	Config         *utils.AppConfig
-	RunningServeAt string
-	RequestRestart func() error
+	Config            *utils.AppConfig
+	RunningServeAt    string
+	RequestRestart    func() error
+	ReloadProxyHealth func(utils.ProxyHealthConfig)
 }
 
 type versionResponse struct {
@@ -72,6 +74,29 @@ type listenConfigUpdateResponse struct {
 	Body struct {
 		Message string           `json:"message" doc:"提示信息"`
 		Item    listenConfigBody `json:"item" doc:"保存后的服务监听配置"`
+	} `json:"body"`
+}
+
+type proxyHealthConfigBody struct {
+	ProbeURL string `json:"probeUrl" doc:"自动节点健康检查使用的 URL"`
+}
+
+type proxyHealthConfigResponse struct {
+	Body proxyHealthConfigBody `json:"body"`
+}
+
+type proxyHealthConfigUpdateRequest struct {
+	ProbeURL string `json:"probeUrl" doc:"自动节点健康检查使用的 URL"`
+}
+
+type proxyHealthConfigUpdateInput struct {
+	Body proxyHealthConfigUpdateRequest
+}
+
+type proxyHealthConfigUpdateResponse struct {
+	Body struct {
+		Message string                `json:"message" doc:"提示信息"`
+		Item    proxyHealthConfigBody `json:"item" doc:"保存后的健康检查配置"`
 	} `json:"body"`
 }
 
@@ -129,6 +154,27 @@ func registerSystemRoutes(api huma.API, routeOptions ...systemRouteOptions) {
 		Tags:        []string{systemTag},
 	}, func(ctx context.Context, input *listenConfigUpdateInput) (*listenConfigUpdateResponse, error) {
 		return systemListenUpdateHandler(ctx, input, options)
+	})
+
+	h.HumaRegister(api, huma.Operation{
+		Method:      http.MethodGet,
+		Path:        "/system/proxy-health",
+		Summary:     "获取节点健康检查配置",
+		OperationID: "system-proxy-health-get",
+		Tags:        []string{systemTag},
+	}, func(ctx context.Context, input *struct{}) (*proxyHealthConfigResponse, error) {
+		return systemProxyHealthGetHandler(ctx, input, options)
+	})
+
+	h.HumaRegister(api, huma.Operation{
+		Method:      http.MethodPut,
+		Path:        "/system/proxy-health",
+		Summary:     "更新节点健康检查配置",
+		Description: "保存自动节点健康检查使用的测试 URL，保存后立即生效。",
+		OperationID: "system-proxy-health-update",
+		Tags:        []string{systemTag},
+	}, func(ctx context.Context, input *proxyHealthConfigUpdateInput) (*proxyHealthConfigUpdateResponse, error) {
+		return systemProxyHealthUpdateHandler(ctx, input, options)
 	})
 
 	h.HumaRegister(api, huma.Operation{
@@ -231,6 +277,59 @@ func systemListenUpdateHandler(ctx context.Context, input *listenConfigUpdateInp
 	return resp, nil
 }
 
+func systemProxyHealthGetHandler(ctx context.Context, _ *struct{}, options systemRouteOptions) (*proxyHealthConfigResponse, error) {
+	_ = ctx
+	config := options.proxyHealthConfig()
+	return &proxyHealthConfigResponse{
+		Body: proxyHealthConfigBody{ProbeURL: config.ProbeURL},
+	}, nil
+}
+
+func systemProxyHealthUpdateHandler(ctx context.Context, input *proxyHealthConfigUpdateInput, options systemRouteOptions) (*proxyHealthConfigUpdateResponse, error) {
+	_ = ctx
+	if input == nil {
+		return nil, huma.NewError(http.StatusBadRequest, "请求体不能为空")
+	}
+
+	probeURL, err := normalizeSystemProxyHealthProbeURL(input.Body.ProbeURL)
+	if err != nil {
+		return nil, huma.NewError(http.StatusBadRequest, err.Error())
+	}
+
+	updated, err := utils.UpdateConfigWithProxyHealth(func(config *utils.AppConfig) error {
+		config.ProxyHealth.ProbeURL = probeURL
+		return nil
+	})
+	if err != nil {
+		return nil, huma.NewError(http.StatusInternalServerError, err.Error())
+	}
+	if options.Config != nil {
+		options.Config.ProxyHealth = updated.ProxyHealth
+	}
+	if options.ReloadProxyHealth != nil {
+		options.ReloadProxyHealth(updated.ProxyHealth)
+	}
+
+	resp := &proxyHealthConfigUpdateResponse{}
+	resp.Body.Message = "节点健康检查 URL 已保存并立即生效"
+	resp.Body.Item = proxyHealthConfigBody{ProbeURL: updated.ProxyHealth.ProbeURL}
+	return resp, nil
+}
+
+func normalizeSystemProxyHealthProbeURL(value string) (string, error) {
+	probeURL := strings.TrimSpace(value)
+	parsed, err := url.Parse(probeURL)
+	if err != nil || parsed.Host == "" {
+		return "", fmt.Errorf("测试 URL 必须是有效的 HTTP 或 HTTPS 地址")
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return parsed.String(), nil
+	default:
+		return "", fmt.Errorf("测试 URL 必须使用 HTTP 或 HTTPS 协议")
+	}
+}
+
 func systemRestartHandler(ctx context.Context, input *restartInput, options systemRouteOptions) (*restartResponse, error) {
 	_ = ctx
 	if input == nil || !input.Body.Confirm {
@@ -259,10 +358,24 @@ func normalizeSystemRouteOptions(routeOptions ...systemRouteOptions) systemRoute
 	if strings.TrimSpace(options.Config.ServeAt) == "" {
 		options.Config.ServeAt = defaultSystemServeAt
 	}
+	if strings.TrimSpace(options.Config.ProxyHealth.ProbeURL) == "" {
+		options.Config.ProxyHealth.ProbeURL = utils.DefaultProxyHealthConfig().ProbeURL
+	}
 	if strings.TrimSpace(options.RunningServeAt) == "" {
 		options.RunningServeAt = options.Config.ServeAt
 	}
 	return options
+}
+
+func (options systemRouteOptions) proxyHealthConfig() utils.ProxyHealthConfig {
+	if options.Config == nil {
+		return utils.DefaultProxyHealthConfig()
+	}
+	config := options.Config.ProxyHealth
+	if strings.TrimSpace(config.ProbeURL) == "" {
+		config.ProbeURL = utils.DefaultProxyHealthConfig().ProbeURL
+	}
+	return config
 }
 
 func (options systemRouteOptions) currentServeAt() string {

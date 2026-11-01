@@ -133,6 +133,9 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		Config:         cfg,
 		RunningServeAt: cfg.ServeAt,
 		RequestRestart: requestRestart,
+		ReloadProxyHealth: func(config utils.ProxyHealthConfig) {
+			proxyService.HealthStart(context.Background(), config)
+		},
 	})
 	h.HumaTypesRegister()
 	h.HumaValidatePatch()

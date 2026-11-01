@@ -52,6 +52,25 @@ docker run -d --name proxyhub -p 3020:3020 -v proxyhub-data:/app/data ghcr.io/fy
 
 Open [http://127.0.0.1:3020](http://127.0.0.1:3020). To use a proxy port from outside the container, publish that port too (for example, `-p 8080:8080`) and set its listen address to `0.0.0.0` in ProxyHub.
 
+With Docker Compose, set `PROXYHUB_PROXY_HEALTH_PROBE_URL` to provide the default URL used by automatic health checks and node tests when no URL has been saved in ProxyHub Settings:
+
+```yaml
+services:
+  proxyhub:
+    image: ghcr.io/fy0/proxy-hub:latest
+    ports:
+      - "3020:3020"
+    volumes:
+      - proxyhub-data:/app/data
+    environment:
+      PROXYHUB_PROXY_HEALTH_PROBE_URL: https://cp.cloudflare.com/generate_204
+
+volumes:
+  proxyhub-data:
+```
+
+The priority is: the URL saved in ProxyHub Settings (`proxyHealth.probeUrl`), then `PROXYHUB_PROXY_HEALTH_PROBE_URL`, then the built-in default `https://www.gstatic.com/generate_204`. The environment value is read when the container starts.
+
 ### Binary
 
 Download the latest archive from [GitHub Releases](https://github.com/fy0/proxy-hub/releases), extract it, then run `proxy-hub` or `proxy-hub.exe`.

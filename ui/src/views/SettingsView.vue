@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Download,
   FileJson,
+  Globe2,
   Power,
   RefreshCw,
   Save,
@@ -14,7 +15,11 @@ import {
 } from 'lucide-vue-next';
 import { postProxySettingsImport } from '@/api/generated';
 import { client } from '@/api/generated/client.gen';
-import type { SettingsBackupDto, SettingsBackupDtoWritable, SettingsImportResultDto } from '@/api/generated';
+import type {
+  SettingsBackupDto,
+  SettingsBackupDtoWritable,
+  SettingsImportResultDto,
+} from '@/api/generated';
 import { Button } from '@/components/ui/button';
 import AppVersionBadge from '@/components/AppVersionBadge.vue';
 import proxyHubMarkUrl from '@/assets/mark-large.png';
@@ -46,6 +51,15 @@ interface SystemRestartResult {
   message: string;
 }
 
+interface SystemProxyHealthConfig {
+  probeUrl: string;
+}
+
+interface SystemProxyHealthUpdateResult {
+  message: string;
+  item: SystemProxyHealthConfig;
+}
+
 const settingsKind = 'proxyhub.proxy-settings';
 const settingsSchemaVersion = 1;
 
@@ -62,6 +76,8 @@ const isExporting = ref(false);
 const isImporting = ref(false);
 const isLoadingListen = ref(false);
 const isSavingListen = ref(false);
+const isLoadingHealth = ref(false);
+const isSavingHealth = ref(false);
 const isRestarting = ref(false);
 const confirmOverwrite = ref(false);
 const showRestartConfirm = ref(false);
@@ -69,16 +85,23 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const listenConfig = ref<SystemListenConfig | null>(null);
 const listenAddress = ref('');
 const listenPort = ref(3020);
-const extraUiInfoPreferenceOptions = computed<Array<{ label: string; value: ExtraUiInfoPreference }>>(
-  () => [
-    { label: t('settings.extraUiInfo.default'), value: 'default' },
-    { label: t('settings.extraUiInfo.off'), value: 'off' },
-    { label: t('settings.extraUiInfo.on'), value: 'on' },
-  ]
-);
+const probeURL = ref('');
+const extraUiInfoPreferenceOptions = computed<
+  Array<{ label: string; value: ExtraUiInfoPreference }>
+>(() => [
+  { label: t('settings.extraUiInfo.default'), value: 'default' },
+  { label: t('settings.extraUiInfo.off'), value: 'off' },
+  { label: t('settings.extraUiInfo.on'), value: 'on' },
+]);
 
 const isBusy = computed(
-  () => isExporting.value || isImporting.value || isSavingListen.value || isRestarting.value
+  () =>
+    isExporting.value ||
+    isImporting.value ||
+    isSavingListen.value ||
+    isLoadingHealth.value ||
+    isSavingHealth.value ||
+    isRestarting.value
 );
 const isListenPortValid = computed(() => {
   const port = Number(listenPort.value);
@@ -87,8 +110,15 @@ const isListenPortValid = computed(() => {
 const canSaveListenConfig = computed(
   () => !isBusy.value && !isLoadingListen.value && isListenPortValid.value
 );
-const canRestartService = computed(() => !isLoadingListen.value && !isRestarting.value);
-const hasSelectedBackup = computed(() => selectedBackup.value !== null || selectedZipBackup.value !== null);
+const canSaveHealthConfig = computed(
+  () => !isBusy.value && !isLoadingHealth.value && probeURL.value.trim() !== ''
+);
+const canRestartService = computed(
+  () => !isBusy.value && !isLoadingListen.value && !isLoadingHealth.value && !isRestarting.value
+);
+const hasSelectedBackup = computed(
+  () => selectedBackup.value !== null || selectedZipBackup.value !== null
+);
 const parsedSummary = computed<ParsedBackupSummary | null>(() => {
   const backup = selectedBackup.value;
   if (!backup) return null;
@@ -102,7 +132,9 @@ const parsedSummary = computed<ParsedBackupSummary | null>(() => {
 const runningServeAtLabel = computed(() => listenConfig.value?.runningServeAt || '-');
 const savedServeAtLabel = computed(() => listenConfig.value?.serveAt || '-');
 const restartRequiredLabel = computed(() =>
-  listenConfig.value?.restartRequired ? t('settings.service.restartYes') : t('settings.service.restartNo')
+  listenConfig.value?.restartRequired
+    ? t('settings.service.restartYes')
+    : t('settings.service.restartNo')
 );
 
 function backupToWritable(value: unknown): SettingsBackupDtoWritable {
@@ -158,7 +190,11 @@ function errorToMessage(error: unknown): string {
 }
 
 function buildExportFileName(extension = 'zip'): string {
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\..+$/, '')
+    .replace('T', '-');
   return `proxyhub-settings-${stamp}.${extension}`;
 }
 
@@ -195,7 +231,11 @@ async function handleExport(): Promise<void> {
       parseAs: 'blob',
       throwOnError: true,
     });
-    downloadBlob(data, fileNameFromContentDisposition(response.headers.get('Content-Disposition')) ?? buildExportFileName());
+    downloadBlob(
+      data,
+      fileNameFromContentDisposition(response.headers.get('Content-Disposition')) ??
+        buildExportFileName()
+    );
     operationMessage.value = t('settings.messages.exported');
   } catch (error) {
     operationMessage.value = errorToMessage(error);
@@ -250,6 +290,50 @@ async function handleSaveListenConfig(): Promise<void> {
     systemMessage.value = errorToMessage(error);
   } finally {
     isSavingListen.value = false;
+  }
+}
+
+function applyHealthConfig(config: SystemProxyHealthConfig): void {
+  probeURL.value = config.probeUrl;
+}
+
+async function loadHealthConfig(): Promise<void> {
+  isLoadingHealth.value = true;
+  systemMessage.value = '';
+  try {
+    const { data } = await client.get<{ 200: SystemProxyHealthConfig }, unknown, true>({
+      url: '/api/v1/system/proxy-health',
+      throwOnError: true,
+    });
+    applyHealthConfig(data);
+  } catch (error) {
+    systemMessage.value = errorToMessage(error);
+  } finally {
+    isLoadingHealth.value = false;
+  }
+}
+
+async function handleSaveHealthConfig(): Promise<void> {
+  if (!probeURL.value.trim()) {
+    systemMessage.value = t('settings.messages.invalidProbeURL');
+    return;
+  }
+
+  isSavingHealth.value = true;
+  systemMessage.value = '';
+  try {
+    const { data } = await client.put<{ 200: SystemProxyHealthUpdateResult }, unknown, true>({
+      url: '/api/v1/system/proxy-health',
+      body: { probeUrl: probeURL.value.trim() },
+      parseAs: 'json',
+      throwOnError: true,
+    });
+    applyHealthConfig(data.item);
+    systemMessage.value = data.message || t('settings.messages.healthSaved');
+  } catch (error) {
+    systemMessage.value = errorToMessage(error);
+  } finally {
+    isSavingHealth.value = false;
   }
 }
 
@@ -415,6 +499,7 @@ async function handleImport(): Promise<void> {
 
 onMounted(() => {
   void loadListenConfig();
+  void loadHealthConfig();
 });
 </script>
 
@@ -457,7 +542,11 @@ onMounted(() => {
             </div>
           </div>
 
-          <div class="settings-preference-control" role="group" :aria-label="t('settings.extraUiInfo.title')">
+          <div
+            class="settings-preference-control"
+            role="group"
+            :aria-label="t('settings.extraUiInfo.title')"
+          >
             <Button
               v-for="option in extraUiInfoPreferenceOptions"
               :key="option.value"
@@ -552,6 +641,47 @@ onMounted(() => {
           </div>
         </article>
 
+        <article class="settings-action-card settings-health-card">
+          <div class="settings-card-heading">
+            <span class="settings-card-icon" aria-hidden="true">
+              <Globe2 class="size-5" />
+            </span>
+            <div>
+              <h2>{{ t('settings.health.title') }}</h2>
+              <p>{{ t('settings.health.lead') }}</p>
+            </div>
+          </div>
+
+          <form class="settings-health-form" @submit.prevent="handleSaveHealthConfig">
+            <label class="settings-field">
+              <span>{{ t('settings.health.urlLabel') }}</span>
+              <input
+                v-model="probeURL"
+                type="url"
+                inputmode="url"
+                autocomplete="off"
+                :placeholder="t('settings.health.urlPlaceholder')"
+                :disabled="isLoadingHealth || isBusy"
+              />
+            </label>
+          </form>
+
+          <p class="settings-health-hint">{{ t('settings.health.priorityHint') }}</p>
+
+          <div class="settings-card-actions">
+            <Button
+              type="button"
+              class="settings-primary-action"
+              :disabled="!canSaveHealthConfig"
+              @click="handleSaveHealthConfig"
+            >
+              <RefreshCw v-if="isSavingHealth" class="size-4 spin-icon" aria-hidden="true" />
+              <Save v-else class="size-4" aria-hidden="true" />
+              {{ t('settings.health.saveButton') }}
+            </Button>
+          </div>
+        </article>
+
         <article class="settings-action-card">
           <div class="settings-card-heading">
             <span class="settings-card-icon" aria-hidden="true">
@@ -572,7 +702,12 @@ onMounted(() => {
               <dd>{{ t('settings.formatValue') }}</dd>
             </div>
           </dl>
-          <Button type="button" class="settings-primary-action" :disabled="isBusy" @click="handleExport">
+          <Button
+            type="button"
+            class="settings-primary-action"
+            :disabled="isBusy"
+            @click="handleExport"
+          >
             <RefreshCw v-if="isExporting" class="size-4 spin-icon" aria-hidden="true" />
             <Download v-else class="size-4" aria-hidden="true" />
             {{ t('settings.export.button') }}
@@ -604,12 +739,18 @@ onMounted(() => {
           <div v-if="parsedSummary" class="settings-import-summary">
             <span>{{ t('settings.counts.nodes', { count: parsedSummary.nodes }) }}</span>
             <span>{{ t('settings.counts.groups', { count: parsedSummary.groups }) }}</span>
-            <span>{{ t('settings.counts.subscriptions', { count: parsedSummary.subscriptions }) }}</span>
+            <span>{{
+              t('settings.counts.subscriptions', { count: parsedSummary.subscriptions })
+            }}</span>
             <span>{{ t('settings.counts.mappings', { count: parsedSummary.mappings }) }}</span>
           </div>
 
           <label class="settings-confirm">
-            <input v-model="confirmOverwrite" type="checkbox" :disabled="!hasSelectedBackup || isBusy" />
+            <input
+              v-model="confirmOverwrite"
+              type="checkbox"
+              :disabled="!hasSelectedBackup || isBusy"
+            />
             <span>{{ t('settings.import.confirmOverwrite') }}</span>
           </label>
 
@@ -655,10 +796,20 @@ onMounted(() => {
           </div>
 
           <div class="settings-modal-actions">
-            <Button type="button" variant="outline" :disabled="isRestarting" @click="showRestartConfirm = false">
+            <Button
+              type="button"
+              variant="outline"
+              :disabled="isRestarting"
+              @click="showRestartConfirm = false"
+            >
               {{ t('common.cancel') }}
             </Button>
-            <Button type="button" variant="destructive" :disabled="isRestarting" @click="handleRestartService">
+            <Button
+              type="button"
+              variant="destructive"
+              :disabled="isRestarting"
+              @click="handleRestartService"
+            >
               <RefreshCw v-if="isRestarting" class="size-4 spin-icon" aria-hidden="true" />
               <Power v-else class="size-4" aria-hidden="true" />
               {{ t('settings.restartConfirm.confirmButton') }}

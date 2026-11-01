@@ -443,6 +443,14 @@ export const messages = {
         on: '开启',
         title: '显示额外 UI 信息',
       },
+      health: {
+        lead: '配置自动节点健康检查和节点测试使用的 HTTP/HTTPS 地址。保存后立即生效。',
+        priorityHint: '系统设置优先；未保存系统设置时，才使用环境变量或内置默认值。',
+        saveButton: '保存测试 URL',
+        title: '节点健康检查',
+        urlLabel: '测试 URL',
+        urlPlaceholder: 'https://www.gstatic.com/generate_204',
+      },
       formatLabel: '文件格式',
       formatValue: 'ProxyHub ZIP / JSON v1',
       import: {
@@ -482,6 +490,8 @@ export const messages = {
         invalidBackup: '备份文件格式不正确。',
         invalidJsonShape: '备份文件必须是 JSON 对象。',
         invalidListenPort: '端口必须是 1 到 65535 之间的整数。',
+        invalidProbeURL: '请输入有效的 HTTP 或 HTTPS 测试 URL。',
+        healthSaved: '节点健康检查 URL 已保存并立即生效。',
         listenSaved: '服务监听配置已保存，重启后生效。',
         requestFailed: '请求后端失败，请确认服务已启动。',
         restarting: '服务正在重启，请稍候…',
@@ -980,6 +990,15 @@ export const messages = {
         on: 'On',
         title: 'Show extra UI info',
       },
+      health: {
+        lead: 'Configure the HTTP/HTTPS URL used by automatic node health checks and node tests. Changes apply immediately.',
+        priorityHint:
+          'The system setting wins; the environment variable is used only when no system setting is saved, followed by the built-in default.',
+        saveButton: 'Save test URL',
+        title: 'Node health checks',
+        urlLabel: 'Test URL',
+        urlPlaceholder: 'https://www.gstatic.com/generate_204',
+      },
       formatLabel: 'File format',
       formatValue: 'ProxyHub ZIP / JSON v1',
       import: {
@@ -991,7 +1010,8 @@ export const messages = {
       },
       restartConfirm: {
         confirmButton: 'Restart',
-        message: 'The service will disconnect briefly and start again with the saved listen address.',
+        message:
+          'The service will disconnect briefly and start again with the saved listen address.',
         title: 'Restart service?',
       },
       service: {
@@ -1019,11 +1039,14 @@ export const messages = {
         invalidBackup: 'The backup file format is invalid.',
         invalidJsonShape: 'The backup file must be a JSON object.',
         invalidListenPort: 'Port must be an integer from 1 to 65535.',
+        invalidProbeURL: 'Enter a valid HTTP or HTTPS test URL.',
+        healthSaved: 'Node health check URL saved and applied immediately.',
         listenSaved: 'Service listen settings saved. Restart to apply them.',
         requestFailed: 'Backend request failed. Check that the service is running.',
         restarting: 'Restarting service...',
         restartRequested: 'Service restart requested.',
-        restartTimeout: 'Restart was requested, but the service is not reachable yet. Open {url} shortly.',
+        restartTimeout:
+          'Restart was requested, but the service is not reachable yet. Open {url} shortly.',
         selectFile: 'Choose a backup file first.',
         zipFileReady: 'ZIP backup file is selected and will be validated by the backend on import.',
       },
