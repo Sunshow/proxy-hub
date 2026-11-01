@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-vue-next';
 import { Button } from '@/components/ui/button';
+import { getSystemProxyHealth } from '@/api/generated';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -269,7 +270,7 @@ const routeTargetMappingId = ref<string | null>(null);
 const confirmationDialog = ref<ConfirmationDialog | null>(null);
 const duplicateRouteNodeDialog = ref<DuplicateRouteNodeDialog | null>(null);
 const testDialog = ref<TestDialogState | null>(null);
-const testUrl = ref('https://www.gstatic.com/generate_204');
+const testUrl = ref('');
 const isTesting = ref(false);
 const ipLookupResult = ref<IPLookupResult | null>(null);
 const ipLookupError = ref('');
@@ -949,10 +950,22 @@ const {
 let nodeSearchTimer: number | null = null;
 let healthClockTimer: number | null = null;
 
+async function loadSystemProbeURL(): Promise<void> {
+  try {
+    const { data } = await getSystemProxyHealth({ throwOnError: true });
+    if (!testUrl.value.trim()) {
+      testUrl.value = data.probeUrl;
+    }
+  } catch {
+    // The backend still applies its configured default when the URL is empty.
+  }
+}
+
 onMounted(() => {
   healthClockTimer = window.setInterval(() => {
     healthClock.value = Date.now();
   }, 60_000);
+  void loadSystemProbeURL();
   refreshRuntimeState().catch(() => undefined);
   startRuntimeStatusPolling();
 });
